@@ -35,27 +35,27 @@ export function detectObjectives(sql: string, alreadyCompleted: Set<string>): st
   check("Q01_EXPEDIENTE", /\b(VISTA_CASOS|CASOS)\b/.test(upper));
   check("Q02_SOSPECHOSOS", /\b(SOSPECHOSOS|VISTA_SOSPECHOSOS)\b/.test(upper));
   check("Q03_DECLARACIONES", /\b(DECLARACIONES|VISTA_DECLARACIONES)\b/.test(upper));
-  check("Q04_COARTADAS", /\UBICACIONES\b/.test(upper));
+  check("Q04_COARTADAS", /\bUBICACIONES\b/.test(upper));
   check(
     "Q05_HORA_CRIMEN",
-    /\UBICACIONES\b/.test(upper) && /\b(BETWEEN|>=|<=|FECHA_HORA)\b/.test(upper)
+    /\bUBICACIONES\b/.test(upper) && /\b(BETWEEN|>=|<=|FECHA_HORA)\b/.test(upper)
   );
-  check("Q06_CAMARAS", /\BCAMARA_SEGURIDAD\b/.test(upper));
-  check("Q07_ACCESOS", /\BACCESOS\b/.test(upper));
-  check("Q08_LLAMADAS", /\BLLAMADAS\b/.test(upper));
-  check("Q09_MENSAJES", /\BMENSAJES\b/.test(upper));
-  check("Q10_TRANSACCIONES", /\BTRANSACCIONES\b/.test(upper));
-  check("Q11_EVIDENCIAS", /\BEVIDENCIAS\b/.test(upper));
-  check("Q12_HUELLAS", /\BHUELLAS\b/.test(upper));
-  check("Q13_CONTRADICCION_1", /\BJOIN\b/.test(upper));
+  check("Q06_CAMARAS", /\bCAMARA_SEGURIDAD\b/.test(upper));
+  check("Q07_ACCESOS", /\bACCESOS\b/.test(upper));
+  check("Q08_LLAMADAS", /\bLLAMADAS\b/.test(upper));
+  check("Q09_MENSAJES", /\bMENSAJES\b/.test(upper));
+  check("Q10_TRANSACCIONES", /\bTRANSACCIONES\b/.test(upper));
+  check("Q11_EVIDENCIAS", /\bEVIDENCIAS\b/.test(upper));
+  check("Q12_HUELLAS", /\bHUELLAS\b/.test(upper));
+  check("Q13_CONTRADICCION_1", /\bJOIN\b/.test(upper));
   check(
     "Q14_CONTRADICCION_2",
-    /\BJOIN\b/.test(upper) && alreadyCompleted.has("Q13_CONTRADICCION_1")
+    /\bJOIN\b/.test(upper) && alreadyCompleted.has("Q13_CONTRADICCION_1")
   );
   check(
     "Q15_MOTIVO_OPORTUNIDAD",
-    /\B(GROUP BY|HAVING|COUNT|SUM|AVG|MAX|MIN)\b/.test(upper) ||
-      (upper.match(/\BJOIN\b/g) || []).length >= 2
+    /\b(GROUP BY|HAVING|COUNT|SUM|AVG|MAX|MIN)\b/.test(upper) ||
+      (upper.match(/\bJOIN\b/g) || []).length >= 2
   );
 
   return newlyCompleted;
