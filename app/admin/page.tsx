@@ -18,7 +18,87 @@ interface Payload {
   nonce: string;
 }
 
-export default function AdminPage() {
+// ── Login gate ────────────────────────────────────────────────────────────────
+function LoginGate({ onUnlock }: { onUnlock: () => void }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!password.trim()) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: password.trim() }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        sessionStorage.setItem("admin_unlocked", "1");
+        onUnlock();
+      } else {
+        setError(data.error ?? "Contraseña incorrecta");
+      }
+    } catch {
+      setError("Error de conexión");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#08080f] flex items-center justify-center px-4">
+      <div className="w-full max-w-sm">
+        <div className="flex flex-col items-center mb-8 gap-3">
+          <span className="text-5xl select-none">🔐</span>
+          <h1 className="text-2xl font-bold text-amber-400">Panel de Administrador</h1>
+          <p className="text-sm text-slate-500 text-center">Acceso restringido — ingresa la contraseña del profesor</p>
+        </div>
+
+        <form onSubmit={handleLogin} className="bg-slate-900/60 border border-slate-700/50 rounded-xl p-6 space-y-4">
+          <div>
+            <label className="block text-sm text-slate-400 mb-2">Contraseña</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••••••"
+              autoFocus
+              className="w-full bg-[#0d1117] border border-slate-700 focus:border-amber-500 rounded-lg px-4 py-3 text-slate-300 placeholder-slate-700 outline-none transition-colors"
+            />
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 text-sm text-red-400 bg-red-950/30 border border-red-800/40 rounded-lg px-3 py-2">
+              <span className="select-none">❌</span>
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={!password.trim() || loading}
+            className="w-full py-2.5 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-700 disabled:text-slate-500 text-black font-bold rounded-lg transition-colors"
+          >
+            {loading ? "Verificando..." : "Entrar"}
+          </button>
+        </form>
+
+        <div className="mt-6 text-center">
+          <Link href="/" className="text-amber-500/60 hover:text-amber-400 text-sm">
+            ← Volver al inicio
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Admin panel ───────────────────────────────────────────────────────────────
+function AdminPanel() {
   const [code, setCode] = useState("");
   const [result, setResult] = useState<{ valid: boolean; payload?: Payload; error?: string } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -42,12 +122,25 @@ export default function AdminPage() {
     }
   };
 
+  const handleLogout = () => {
+    sessionStorage.removeItem("admin_unlocked");
+    window.location.reload();
+  };
+
   return (
     <div className="min-h-screen bg-[#08080f] px-4 py-10">
       <div className="max-w-2xl mx-auto">
-        <Link href="/" className="text-amber-500/60 hover:text-amber-400 text-sm inline-flex items-center gap-1 mb-8">
-          ← Inicio
-        </Link>
+        <div className="flex items-center justify-between mb-8">
+          <Link href="/" className="text-amber-500/60 hover:text-amber-400 text-sm inline-flex items-center gap-1">
+            ← Inicio
+          </Link>
+          <button
+            onClick={handleLogout}
+            className="text-xs text-slate-500 hover:text-red-400 transition-colors"
+          >
+            Cerrar sesión
+          </button>
+        </div>
 
         <div className="flex items-center gap-3 mb-8">
           <span className="text-3xl select-none">🛡️</span>
@@ -111,6 +204,20 @@ export default function AdminPage() {
       </div>
     </div>
   );
+}
+
+// ── Page root ─────────────────────────────────────────────────────────────────
+export default function AdminPage() {
+  const [unlocked, setUnlocked] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return sessionStorage.getItem("admin_unlocked") === "1";
+  });
+
+  if (!unlocked) {
+    return <LoginGate onUnlock={() => setUnlocked(true)} />;
+  }
+
+  return <AdminPanel />;
 }
 
 function Row({ label, value, highlight, mono }: { label: string; value: string; highlight?: boolean; mono?: boolean }) {

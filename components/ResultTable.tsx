@@ -34,11 +34,19 @@ export function ResultTable({ result, error }: { result: QueryResult | null; err
         <tbody>
           {result.rows.map((row, ri) => (
             <tr key={ri} className="border-b border-amber-900/20 hover:bg-amber-900/10">
-              {row.map((cell, ci) => (
-                <td key={ci} className="px-3 py-1.5 text-slate-300 whitespace-nowrap max-w-xs overflow-hidden text-ellipsis">
-                  {cell === null ? <span className="text-slate-600">NULL</span> : String(cell)}
-                </td>
-              ))}
+              {row.map((cell, ci) => {
+                const text = cell === null ? null : String(cell);
+                const isLong = text !== null && text.length > 60;
+                return (
+                  <td
+                    key={ci}
+                    title={text ?? "NULL"}
+                    className={`px-3 py-1.5 text-slate-300 ${isLong ? "whitespace-normal break-words max-w-sm" : "whitespace-nowrap max-w-xs overflow-hidden text-ellipsis"}`}
+                  >
+                    {text === null ? <span className="text-slate-600">NULL</span> : text}
+                  </td>
+                );
+              })}
             </tr>
           ))}
         </tbody>
