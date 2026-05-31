@@ -7,7 +7,7 @@ import { isQueryAllowed } from "@/lib/objectives";
 
 interface Props {
   caseId: number;
-  onQueryExecuted: (sql: string, rowCount: number, valid: boolean, error?: string) => void;
+  onQueryExecuted: (sql: string, rowCount: number, valid: boolean, columns: string[], error?: string) => void;
 }
 
 const EXAMPLES = [
@@ -41,7 +41,7 @@ export function SQLConsole({ caseId, onQueryExecuted }: Props) {
       const err = "Operación no permitida. Solo se admiten consultas SELECT, SHOW, DESCRIBE y EXPLAIN.";
       setQueryError(err);
       setResult(null);
-      onQueryExecuted(trimmed, 0, false, err);
+      onQueryExecuted(trimmed, 0, false, [], err);
       return;
     }
 
@@ -51,12 +51,12 @@ export function SQLConsole({ caseId, onQueryExecuted }: Props) {
       setQueryError(undefined);
       setHistory((h) => [trimmed, ...h.slice(0, 49)]);
       setHistIdx(-1);
-      onQueryExecuted(trimmed, res.rowCount, true);
+      onQueryExecuted(trimmed, res.rowCount, true, res.columns);
     } catch (e) {
       const err = String(e).replace(/^Error:\s*/i, "");
       setQueryError(err);
       setResult(null);
-      onQueryExecuted(trimmed, 0, false, err);
+      onQueryExecuted(trimmed, 0, false, [], err);
     }
   }, [sql, caseId, execute, onQueryExecuted]);
 

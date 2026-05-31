@@ -45,16 +45,34 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
   useEffect(() => {
     const s = loadState();
     if (!s.investigator) { router.push("/register"); return; }
-    if (!s.currentCase) {
-      saveState({ ...s, currentCase: caseId, startedAt: s.startedAt ?? new Date().toISOString() });
-      setState({ ...s, currentCase: caseId, startedAt: s.startedAt ?? new Date().toISOString() });
-    } else {
-      setState(s);
+
+    // Recalculate objectives from all stored valid queries on every load.
+    // This ensures a page refresh re-detects objectives after any bug fix
+    // without losing the query history.
+    // Note: stored queries have no saved columns, so we pass [] and rely on
+    // text-based detection only for history replay.
+    const alreadyCompleted = new Set<string>();
+    const recalculated: string[] = [];
+    for (const q of s.queries) {
+      if (q.valid) {
+        const newly = detectObjectives(q.sql, [], alreadyCompleted);
+        newly.forEach((c) => alreadyCompleted.add(c));
+        recalculated.push(...newly);
+      }
     }
+
+    const updated = {
+      ...s,
+      currentCase: s.currentCase ?? caseId,
+      startedAt: s.startedAt ?? new Date().toISOString(),
+      completedObjectives: recalculated,
+    };
+    saveState(updated);
+    setState(updated);
   }, [router, caseId]);
 
   const handleQueryExecuted = useCallback(
-    (sql: string, rowCount: number, valid: boolean, error?: string) => {
+    (sql: string, rowCount: number, valid: boolean, columns: string[], error?: string) => {
       setState((prev) => {
         if (!prev) return prev;
         const newQuery: QueryRecord = {
@@ -67,7 +85,7 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
         };
         const newQueries = [...prev.queries, newQuery];
         const alreadyCompleted = new Set(prev.completedObjectives);
-        const newlyCompleted = valid ? detectObjectives(sql, alreadyCompleted) : [];
+        const newlyCompleted = valid ? detectObjectives(sql, columns, alreadyCompleted) : [];
         const newCompleted = [...prev.completedObjectives, ...newlyCompleted];
         const next = { ...prev, queries: newQueries, completedObjectives: newCompleted };
         saveState(next);
