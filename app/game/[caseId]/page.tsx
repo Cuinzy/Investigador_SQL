@@ -3,7 +3,10 @@
 import { useEffect, useState, useCallback, use } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { loadState, saveState, GameState, QueryRecord } from "@/lib/gameState";
+import {
+  loadState, saveState, GameState, QueryRecord,
+  getCaseProgress, updateCaseProgress, defaultCaseProgress,
+} from "@/lib/gameState";
 import { CASES, SUSPECTS, DECLARATIONS, CULPRITS } from "@/lib/gameData";
 import { SQLConsole } from "@/components/SQLConsole";
 import { OBJECTIVES, detectObjectives } from "@/lib/objectives";
@@ -21,8 +24,7 @@ function sha256(text: string): string {
 }
 
 function simpleHash(queries: QueryRecord[]): string {
-  const combined = queries.map((q) => q.sql).join("|");
-  return sha256(combined);
+  return sha256(queries.map((q) => q.sql).join("|"));
 }
 
 export default function GamePage({ params }: { params: Promise<{ caseId: string }> }) {
@@ -37,23 +39,23 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
   const [accuseTarget, setAccuseTarget] = useState<number | null>(null);
   const [justification, setJustification] = useState("");
   const [accuseResult, setAccuseResult] = useState<"correct" | "wrong" | null>(null);
+  const [wrongPenaltyNeeded, setWrongPenaltyNeeded] = useState(0);
   const [generating, setGenerating] = useState(false);
 
   const currentCase = CASES.find((c) => c.id === caseId);
   const suspects = SUSPECTS.filter((s) => s.id_caso === caseId);
 
+  // ── Load state and recalculate objectives for this case ────────────────────
   useEffect(() => {
     const s = loadState();
     if (!s.investigator) { router.push("/register"); return; }
 
-    // Recalculate objectives from all stored valid queries on every load.
-    // This ensures a page refresh re-detects objectives after any bug fix
-    // without losing the query history.
-    // Note: stored queries have no saved columns, so we pass [] and rely on
-    // text-based detection only for history replay.
+    const progress = getCaseProgress(s, caseId);
+
+    // Re-detect objectives from stored query history (handles bug fixes on reload)
     const alreadyCompleted = new Set<string>();
     const recalculated: string[] = [];
-    for (const q of s.queries) {
+    for (const q of progress.queries) {
       if (q.valid) {
         const newly = detectObjectives(q.sql, [], alreadyCompleted);
         newly.forEach((c) => alreadyCompleted.add(c));
@@ -61,20 +63,42 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
       }
     }
 
-    const updated = {
-      ...s,
-      currentCase: s.currentCase ?? caseId,
-      startedAt: s.startedAt ?? new Date().toISOString(),
+    const updatedProgress = {
+      ...progress,
       completedObjectives: recalculated,
+      startedAt: progress.startedAt ?? new Date().toISOString(),
     };
+
+    const updated = updateCaseProgress(
+      { ...s, currentCase: caseId },
+      caseId,
+      updatedProgress
+    );
     saveState(updated);
     setState(updated);
   }, [router, caseId]);
 
+  // ── Derived per-case values ────────────────────────────────────────────────
+  const caseProgress = state ? getCaseProgress(state, caseId) : defaultCaseProgress();
+  const validQueries = caseProgress.queries.filter((q) => q.valid);
+  const completedObjectives = caseProgress.completedObjectives;
+  const minRequired = caseProgress.minQueriesRequired;
+
+  // Can accuse when: all 15 objectives done AND enough valid queries (penalty-aware)
+  const canAccuse =
+    completedObjectives.length >= 15 &&
+    validQueries.length >= minRequired &&
+    !caseProgress.solved;
+
+  // How many more valid queries are needed (for penalty display)
+  const queriesStillNeeded = Math.max(0, minRequired - validQueries.length);
+
+  // ── Query executed callback ────────────────────────────────────────────────
   const handleQueryExecuted = useCallback(
     (sql: string, rowCount: number, valid: boolean, columns: string[], error?: string) => {
       setState((prev) => {
         if (!prev) return prev;
+        const progress = getCaseProgress(prev, caseId);
         const newQuery: QueryRecord = {
           id: Date.now().toString(),
           sql,
@@ -83,34 +107,48 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
           valid,
           error,
         };
-        const newQueries = [...prev.queries, newQuery];
-        const alreadyCompleted = new Set(prev.completedObjectives);
+        const newQueries = [...progress.queries, newQuery];
+        const alreadyCompleted = new Set(progress.completedObjectives);
         const newlyCompleted = valid ? detectObjectives(sql, columns, alreadyCompleted) : [];
-        const newCompleted = [...prev.completedObjectives, ...newlyCompleted];
-        const next = { ...prev, queries: newQueries, completedObjectives: newCompleted };
+        const newCompleted = [...progress.completedObjectives, ...newlyCompleted];
+        const newProgress = { ...progress, queries: newQueries, completedObjectives: newCompleted };
+        const next = updateCaseProgress(prev, caseId, newProgress);
         saveState(next);
         return next;
       });
     },
-    []
+    [caseId]
   );
 
-  const validQueries = state?.queries.filter((q) => q.valid) ?? [];
-  const completedObjectives = state?.completedObjectives ?? [];
-  const canAccuse = validQueries.length >= 15 && completedObjectives.length >= 15;
-
+  // ── Accusation ─────────────────────────────────────────────────────────────
   const handleAccuse = async () => {
     if (!accuseTarget || !state || !currentCase) return;
     const isCorrect = CULPRITS[caseId] === accuseTarget;
 
     if (!isCorrect) {
+      // Apply penalty: need 5 more valid queries before next accusation
+      setState((prev) => {
+        if (!prev) return prev;
+        const progress = getCaseProgress(prev, caseId);
+        const currentValidCount = progress.queries.filter((q) => q.valid).length;
+        const newMinRequired = currentValidCount + 5;
+        const newProgress = {
+          ...progress,
+          wrongAccusations: progress.wrongAccusations + 1,
+          minQueriesRequired: newMinRequired,
+        };
+        const next = updateCaseProgress(prev, caseId, newProgress);
+        saveState(next);
+        return next;
+      });
+      setWrongPenaltyNeeded(validQueries.length + 5);
       setAccuseResult("wrong");
       return;
     }
 
     setGenerating(true);
     const culprit = suspects.find((s) => s.id === accuseTarget);
-    const queriesHash = simpleHash(state.queries);
+    const queriesHash = simpleHash(caseProgress.queries);
     const solvedAt = new Date().toISOString();
 
     try {
@@ -123,7 +161,7 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
           caseId,
           caseTitle: currentCase.titulo,
           culpritName: culprit?.nombre ?? "",
-          queryCount: state.queries.length,
+          queryCount: caseProgress.queries.length,
           queriesHash,
           solvedAt,
         }),
@@ -131,16 +169,21 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
       const data = await res.json();
       const code = data.code ?? "ERROR-GENERATING-CODE";
 
-      const next: GameState = {
-        ...state,
-        solved: true,
-        culpritSelected: accuseTarget,
-        justification,
-        solvedAt,
-        validationCode: code,
-      };
-      saveState(next);
-      setState(next);
+      setState((prev) => {
+        if (!prev) return prev;
+        const progress = getCaseProgress(prev, caseId);
+        const newProgress = {
+          ...progress,
+          solved: true,
+          culpritSelected: accuseTarget,
+          justification,
+          solvedAt,
+          validationCode: code,
+        };
+        const next = updateCaseProgress(prev, caseId, newProgress);
+        saveState(next);
+        return next;
+      });
       setAccuseResult("correct");
     } catch {
       setAccuseResult("correct");
@@ -149,9 +192,10 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
     }
   };
 
+  // ── Report download ────────────────────────────────────────────────────────
   const downloadReport = () => {
     if (!state || !currentCase) return;
-    const culprit = suspects.find((s) => s.id === state.culpritSelected);
+    const culprit = suspects.find((s) => s.id === caseProgress.culpritSelected);
     const lines = [
       "REPORTE DE INVESTIGACIÓN SQL",
       "============================",
@@ -161,16 +205,16 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
       `Código del investigador: ${state.investigator?.code}`,
       state.investigator?.group ? `Grupo: ${state.investigator.group}` : "",
       `Caso: Caso ${String(caseId).padStart(2, "0")} - ${currentCase.titulo}`,
-      `Fecha de resolución: ${state.solvedAt ? new Date(state.solvedAt).toLocaleString("es") : ""}`,
+      `Fecha de resolución: ${caseProgress.solvedAt ? new Date(caseProgress.solvedAt).toLocaleString("es") : ""}`,
       `Culpable identificado: ${culprit?.nombre}`,
       "",
       "CONSULTAS SQL REALIZADAS",
       "========================",
-      ...state.queries.map((q, i) => `${i + 1}. ${q.sql}`),
+      ...caseProgress.queries.map((q, i) => `${i + 1}. ${q.sql}`),
       "",
       "CÓDIGO ÚNICO DE VALIDACIÓN",
       "==========================",
-      state.validationCode ?? "",
+      caseProgress.validationCode ?? "",
       "",
       "Este código puede ser validado por el administrador en el Panel de Administrador.",
     ].filter((l) => l !== undefined);
@@ -208,7 +252,7 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
           <div className="flex items-center gap-3 shrink-0">
             <span className="text-xs text-slate-500 hidden sm:block">{state.investigator?.name}</span>
             <div className={`text-xs px-2 py-1 rounded ${canAccuse ? "bg-amber-900/50 text-amber-300 border border-amber-700/50" : "bg-slate-800 text-slate-500"}`}>
-              {completedObjectives.length}/15 obj · {validQueries.length} consultas
+              {completedObjectives.length}/15 obj · {validQueries.length}/{minRequired} consultas
             </div>
           </div>
         </div>
@@ -257,7 +301,7 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
                   <Field label="Hora estimada" value={new Date(currentCase.fecha_crimen).toLocaleString("es", { dateStyle: "medium", timeStyle: "short" })} />
                 </div>
                 <div className="bg-slate-950/50 rounded-lg p-3">
-                  <div className="text-xs text-slate-500 mb-1">Dificultad</div>
+                  <div className="text-xs text-slate-600 mb-1">Dificultad</div>
                   <div className={`inline-block text-xs px-2 py-0.5 rounded-full border ${currentCase.dificultad === "alta" ? "bg-red-900/40 text-red-400 border-red-800/50" : currentCase.dificultad === "media" ? "bg-yellow-900/40 text-yellow-400 border-yellow-800/50" : "bg-green-900/40 text-green-400 border-green-800/50"}`}>
                     {currentCase.dificultad.charAt(0).toUpperCase() + currentCase.dificultad.slice(1)}
                   </div>
@@ -276,7 +320,7 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
                   <li>Usa la <strong className="text-slate-300">Consola SQL</strong> para cruzar declaraciones con datos</li>
                   <li>Completa los <strong className="text-slate-300">15 objetivos obligatorios</strong> de investigación</li>
                   <li>Realiza mínimo <strong className="text-slate-300">15 consultas válidas</strong> antes de acusar</li>
-                  <li>Cuando estés listo, acusa al culpable con una justificación</li>
+                  <li>Una acusación incorrecta obliga a <strong className="text-slate-300">investigar 5 consultas más</strong></li>
                 </ul>
               </div>
             </div>
@@ -333,12 +377,10 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
                           <div className="text-xs text-slate-500">Interrogatorio</div>
                         </div>
                       </div>
-
                       <div className="mb-4">
                         <div className="text-xs text-slate-500 mb-1">Motivo aparente</div>
                         <p className="text-sm text-slate-300">{s.motivo_aparente}</p>
                       </div>
-
                       <div>
                         <div className="text-xs text-slate-500 mb-2 uppercase tracking-wider">Declaraciones</div>
                         <div className="space-y-2">
@@ -374,13 +416,13 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
               <SQLConsole caseId={caseId} onQueryExecuted={handleQueryExecuted} />
             </div>
 
-            {state.queries.length > 0 && (
+            {caseProgress.queries.length > 0 && (
               <div className="mt-4 bg-slate-900/40 border border-slate-700/50 rounded-xl p-4">
-                <div className="text-xs text-slate-500 mb-3 uppercase tracking-wider">Historial de consultas ({state.queries.length})</div>
+                <div className="text-xs text-slate-500 mb-3 uppercase tracking-wider">Historial de consultas ({caseProgress.queries.length})</div>
                 <div className="space-y-1 max-h-48 overflow-y-auto">
-                  {[...state.queries].reverse().map((q, i) => (
+                  {[...caseProgress.queries].reverse().map((q, i) => (
                     <div key={q.id} className={`flex items-start gap-2 text-xs font-mono py-1 border-b border-slate-800/30 ${q.valid ? "text-slate-400" : "text-red-500/60"}`}>
-                      <span className="text-slate-600 shrink-0">{state.queries.length - i}.</span>
+                      <span className="text-slate-600 shrink-0">{caseProgress.queries.length - i}.</span>
                       <span className="truncate">{q.sql}</span>
                       {q.valid && <span className="text-slate-600 shrink-0">{q.rowCount} filas</span>}
                     </div>
@@ -397,9 +439,21 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
             <div className="bg-slate-900/40 border border-slate-700/50 rounded-xl p-5 mb-4">
               <h2 className="font-bold text-slate-200 mb-4">Progreso de Investigación</h2>
               <div className="grid grid-cols-2 gap-4 mb-6">
-                <StatCard label="Consultas válidas" value={validQueries.length} target={15} />
+                <StatCard label="Consultas válidas" value={validQueries.length} target={minRequired} />
                 <StatCard label="Objetivos completados" value={completedObjectives.length} target={15} />
               </div>
+
+              {/* Penalty notice */}
+              {caseProgress.wrongAccusations > 0 && (
+                <div className="mb-4 p-3 rounded-lg bg-orange-950/30 border border-orange-700/40 text-sm">
+                  <span className="text-orange-400 font-semibold">⚠ Acusaciones incorrectas: {caseProgress.wrongAccusations}</span>
+                  {queriesStillNeeded > 0 && (
+                    <p className="text-orange-300/70 text-xs mt-1">
+                      Necesitas {queriesStillNeeded} consulta{queriesStillNeeded !== 1 ? "s" : ""} válida{queriesStillNeeded !== 1 ? "s" : ""} más antes de poder acusar de nuevo.
+                    </p>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-2">
                 {OBJECTIVES.map((obj) => {
@@ -419,7 +473,16 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
             </div>
 
             <div className={`rounded-xl p-5 border ${canAccuse ? "bg-amber-900/20 border-amber-700/50" : "bg-slate-900/40 border-slate-700/50"}`}>
-              {canAccuse ? (
+              {caseProgress.solved ? (
+                <div className="text-center">
+                  <div className="text-2xl mb-2 select-none">✅</div>
+                  <h3 className="font-bold text-green-400 mb-1">¡Caso resuelto!</h3>
+                  <div className="font-mono text-xs text-amber-300/80 break-all bg-slate-800/50 rounded p-2 mt-2">{caseProgress.validationCode}</div>
+                  <button onClick={downloadReport} className="mt-3 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-black font-bold rounded-lg text-sm transition-colors">
+                    Descargar Reporte
+                  </button>
+                </div>
+              ) : canAccuse ? (
                 <div className="text-center">
                   <div className="text-2xl mb-2 select-none">⚖️</div>
                   <h3 className="font-bold text-amber-300 mb-1">¡Listo para acusar!</h3>
@@ -434,10 +497,15 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
               ) : (
                 <div className="text-center text-slate-500">
                   <div className="text-xl mb-2 select-none">🔒</div>
-                  <p className="text-sm">El botón de acusación se desbloqueará cuando completes los 15 objetivos y realices al menos 15 consultas válidas.</p>
-                  <p className="text-xs text-slate-600 mt-1">
-                    Te faltan {Math.max(0, 15 - completedObjectives.length)} objetivos y {Math.max(0, 15 - validQueries.length)} consultas válidas.
-                  </p>
+                  <p className="text-sm">El botón de acusación se desbloqueará cuando completes los 15 objetivos y realices las consultas requeridas.</p>
+                  <div className="text-xs text-slate-600 mt-2 space-y-0.5">
+                    {completedObjectives.length < 15 && (
+                      <p>Faltan <strong className="text-slate-500">{15 - completedObjectives.length}</strong> objetivo{15 - completedObjectives.length !== 1 ? "s" : ""}</p>
+                    )}
+                    {queriesStillNeeded > 0 && (
+                      <p>Faltan <strong className="text-orange-500">{queriesStillNeeded}</strong> consulta{queriesStillNeeded !== 1 ? "s" : ""} válida{queriesStillNeeded !== 1 ? "s" : ""}{caseProgress.wrongAccusations > 0 ? " (penalización por acusación incorrecta)" : ""}</p>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -504,12 +572,10 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
                 <div className="bg-green-950/30 border border-green-800/30 rounded-lg p-3 mb-5 text-sm text-green-300">
                   {suspects.find((s) => s.id === accuseTarget)?.nombre}
                 </div>
-
                 <div className="bg-slate-800/50 rounded-lg p-3 mb-5 text-left">
                   <div className="text-xs text-slate-500 mb-1">Código de Validación</div>
-                  <div className="font-mono text-xs text-amber-300 break-all">{state.validationCode}</div>
+                  <div className="font-mono text-xs text-amber-300 break-all">{caseProgress.validationCode}</div>
                 </div>
-
                 <div className="flex flex-col gap-3">
                   <button onClick={downloadReport} className="py-2.5 bg-amber-600 hover:bg-amber-500 text-black font-bold rounded-lg transition-colors">
                     Descargar Reporte .txt
@@ -523,7 +589,13 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
               <>
                 <div className="text-5xl mb-4 select-none">❌</div>
                 <h2 className="text-2xl font-bold text-red-400 mb-2">Acusación Incorrecta</h2>
-                <p className="text-slate-400 mb-5">La acusación no es suficiente. Revisa mejor las contradicciones, la ventana de tiempo y las evidencias físicas.</p>
+                <p className="text-slate-400 mb-3">La evidencia no es suficiente para esa acusación.</p>
+                <div className="bg-orange-950/30 border border-orange-700/40 rounded-lg p-3 mb-5 text-sm text-orange-300">
+                  Penalización: debes realizar <strong>5 consultas válidas más</strong> antes de poder acusar de nuevo.
+                  <div className="text-xs text-orange-400/70 mt-1">
+                    Necesitas llegar a {wrongPenaltyNeeded} consultas válidas.
+                  </div>
+                </div>
                 <button
                   onClick={() => { setAccuseResult(null); setShowAccuseModal(false); setAccuseTarget(null); setTab("consola"); }}
                   className="py-2.5 px-6 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors"

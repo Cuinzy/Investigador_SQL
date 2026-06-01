@@ -15,9 +15,8 @@ export interface Investigator {
   group: string;
 }
 
-export interface GameState {
-  investigator: Investigator | null;
-  currentCase: number | null;
+/** Progress tracked independently for each case */
+export interface CaseProgress {
   queries: QueryRecord[];
   completedObjectives: string[];
   solved: boolean;
@@ -26,9 +25,48 @@ export interface GameState {
   startedAt: string | null;
   solvedAt: string | null;
   validationCode: string | null;
+  /** How many wrong accusations have been made on this case */
+  wrongAccusations: number;
+  /**
+   * Minimum number of valid queries required before the next accusation.
+   * Starts at 15. After each wrong accusation it is set to (currentValidCount + 5),
+   * so the student must investigate 5 more before trying again.
+   */
+  minQueriesRequired: number;
 }
 
-const STORAGE_KEY = "expediente_sql_state";
+export interface GameState {
+  investigator: Investigator | null;
+  currentCase: number | null;
+  /** Per-case progress, keyed by case id */
+  cases: Record<number, CaseProgress>;
+}
+
+// Use v2 key to avoid conflicts with old single-case state
+const STORAGE_KEY = "expediente_sql_state_v2";
+
+export function defaultCaseProgress(): CaseProgress {
+  return {
+    queries: [],
+    completedObjectives: [],
+    solved: false,
+    culpritSelected: null,
+    justification: "",
+    startedAt: null,
+    solvedAt: null,
+    validationCode: null,
+    wrongAccusations: 0,
+    minQueriesRequired: 15,
+  };
+}
+
+export function defaultState(): GameState {
+  return {
+    investigator: null,
+    currentCase: null,
+    cases: {},
+  };
+}
 
 export function loadState(): GameState {
   if (typeof window === "undefined") return defaultState();
@@ -44,32 +82,23 @@ export function saveState(state: GameState): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-export function defaultState(): GameState {
+export function getCaseProgress(state: GameState, caseId: number): CaseProgress {
+  return state.cases[caseId] ?? defaultCaseProgress();
+}
+
+export function updateCaseProgress(
+  state: GameState,
+  caseId: number,
+  progress: CaseProgress
+): GameState {
   return {
-    investigator: null,
-    currentCase: null,
-    queries: [],
-    completedObjectives: [],
-    solved: false,
-    culpritSelected: null,
-    justification: "",
-    startedAt: null,
-    solvedAt: null,
-    validationCode: null,
+    ...state,
+    cases: { ...state.cases, [caseId]: progress },
   };
 }
 
-export function resetCase(state: GameState): GameState {
-  return {
-    ...state,
-    currentCase: null,
-    queries: [],
-    completedObjectives: [],
-    solved: false,
-    culpritSelected: null,
-    justification: "",
-    startedAt: null,
-    solvedAt: null,
-    validationCode: null,
-  };
+export function resetCase(state: GameState, caseId: number): GameState {
+  const cases = { ...state.cases };
+  delete cases[caseId];
+  return { ...state, cases };
 }
