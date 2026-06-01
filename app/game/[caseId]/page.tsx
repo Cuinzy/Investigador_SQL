@@ -131,7 +131,7 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
         if (!prev) return prev;
         const progress = getCaseProgress(prev, caseId);
         const currentValidCount = progress.queries.filter((q) => q.valid).length;
-        const newMinRequired = currentValidCount + 5;
+        const newMinRequired = currentValidCount + 4;
         const newProgress = {
           ...progress,
           wrongAccusations: progress.wrongAccusations + 1,
@@ -141,7 +141,7 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
         saveState(next);
         return next;
       });
-      setWrongPenaltyNeeded(validQueries.length + 5);
+      setWrongPenaltyNeeded(validQueries.length + 4);
       setAccuseResult("wrong");
       return;
     }
@@ -320,7 +320,7 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
                   <li>Usa la <strong className="text-slate-300">Consola SQL</strong> para cruzar declaraciones con datos</li>
                   <li>Completa los <strong className="text-slate-300">15 objetivos obligatorios</strong> de investigación</li>
                   <li>Realiza mínimo <strong className="text-slate-300">15 consultas válidas</strong> antes de acusar</li>
-                  <li>Una acusación incorrecta obliga a <strong className="text-slate-300">investigar 5 consultas más</strong></li>
+                  <li>Una acusación incorrecta obliga a <strong className="text-slate-300">investigar 4 consultas más</strong></li>
                 </ul>
               </div>
             </div>
@@ -591,7 +591,7 @@ export default function GamePage({ params }: { params: Promise<{ caseId: string 
                 <h2 className="text-2xl font-bold text-red-400 mb-2">Acusación Incorrecta</h2>
                 <p className="text-slate-400 mb-3">La evidencia no es suficiente para esa acusación.</p>
                 <div className="bg-orange-950/30 border border-orange-700/40 rounded-lg p-3 mb-5 text-sm text-orange-300">
-                  Penalización: debes realizar <strong>5 consultas válidas más</strong> antes de poder acusar de nuevo.
+                  Penalización: debes realizar <strong>4 consultas válidas más</strong> antes de poder acusar de nuevo.
                   <div className="text-xs text-orange-400/70 mt-1">
                     Necesitas llegar a {wrongPenaltyNeeded} consultas válidas.
                   </div>
