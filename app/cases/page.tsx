@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { loadState, saveState, resetCase } from "@/lib/gameState";
+import { loadState, saveState } from "@/lib/gameState";
 import { CASES } from "@/lib/gameData";
 
 const DIFFICULTY_LABELS = { baja: "Baja", media: "Media", alta: "Alta" };
@@ -26,8 +26,7 @@ export default function CasesPage() {
 
   const startCase = (caseId: number) => {
     const state = loadState();
-    const newState = resetCase(state);
-    saveState({ ...newState, currentCase: caseId, startedAt: new Date().toISOString() });
+    saveState({ ...state, currentCase: caseId });
     router.push(`/game/${caseId}`);
   };
 
